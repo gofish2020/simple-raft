@@ -26,7 +26,7 @@ func (s *RaftServer) Register(ctx context.Context, req *clientpb.Auth) (*clientp
 
 func (s *RaftServer) Get(ctx context.Context, req *clientpb.ReadonlyQuery) (*clientpb.Response, error) {
 	var res *clientpb.Response
-	if s.node.IsLeader() {
+	if s.node.IsLeader() { // 判断是否 leader
 		value, err := s.get(req.Key)
 		if err != nil {
 			res = &clientpb.Response{Success: false, Msg: fmt.Sprintf("查询key失败: %s", err.Error())}

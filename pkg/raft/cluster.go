@@ -37,19 +37,23 @@ type Cluster struct {
 	logger             *zap.SugaredLogger
 }
 
+// from（如果是自己本来是主，from 为空；如果是follower转发来的，from就是follower的值） index 表示 leader 的日志进度  req 表示唯一标识（某个时间戳，某个节点，某次请求）
 func (c *Cluster) AddReadIndex(from, index uint64, req []byte) {
 
+	// |timestamp|nodeid|seq|
 	c.pendingReadIndex[string(req)] = &ReadIndexResp{Req: req, Send: from, Index: index, ack: map[uint64]bool{}}
 }
 
+// node 对方节点 唯一标识
 func (c *Cluster) HeartbeatCheck(req []byte, node uint64) *ReadIndexResp {
 
+	// TODO：可以在这里加一个 随机检查，c.pendingReadIndex 中某些已经时间戳已经很久了，还存在，其实就是垃圾数据，不可能被处理了，随机挑选几个key检查下）
 	k := string(req)
 	p := c.pendingReadIndex[k]
 	if p != nil {
-		p.ack[node] = true
-		if len(p.ack) >= len(c.progress)/2 {
-			delete(c.pendingReadIndex, k)
+		p.ack[node] = true                   //接收到一笔响应
+		if len(p.ack) >= len(c.progress)/2 { // 说明 req 这个请求，已经得到了多数派的认可
+			delete(c.pendingReadIndex, k) // 只有多数派，才删除（所以可能存在 pendingReadIndex 垃圾数据越来越多）
 			return p
 		}
 	}

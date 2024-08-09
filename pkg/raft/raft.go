@@ -235,14 +235,16 @@ func (r *Raft) HandleFollowerMessage(msg *pb.RaftMessage) {
 		if grant {
 			r.electtionTick = 0
 		}
+
+		// &pb.RaftMessage{MsgType: pb.MessageType_READINDEX, Term: n.raft.currentTerm, Context: req}
 	case pb.MessageType_READINDEX: // 询问Leader最新提交
-		lastLogIndex, _ := r.raftlog.GetLastLogIndexAndTerm()
+		lastLogIndex, _ := r.raftlog.GetLastLogIndexAndTerm() // lastLogIndex follower的日志索引
 		r.cluster.AddReadIndex(msg.From, lastLogIndex, msg.Context)
-		msg.To = r.leader
+		msg.To = r.leader // 转发给 leader
 		msg.From = r.id
 		r.send(msg)
 	case pb.MessageType_READINDEX_RESP:
-		r.ReadIndex = append(r.ReadIndex, &ReadIndexResp{
+		r.ReadIndex = append(r.ReadIndex, &ReadIndexResp{ /// 保存在 ReadIndex 最后数据会到 n.readc中
 			Req:   msg.Context,
 			Index: msg.LastLogIndex,
 			Send:  msg.To,
@@ -273,11 +275,11 @@ func (r *Raft) HandleLeaderMessage(msg *pb.RaftMessage) {
 		r.AppendEntry(msg.Entry) // 保存本地，并广播给 其他节点
 
 	case pb.MessageType_READINDEX: // readindex向集群发送心跳检查是否为Leader
-		r.BroadcastHeartbeat(msg.Context)
+		r.BroadcastHeartbeat(msg.Context) // |timestamp|nodeid|seq| 用心跳的方式发送出去
 		r.hearbeatTick = 0
 
 		lastLogIndex, _ := r.raftlog.GetLastLogIndexAndTerm()
-		r.cluster.AddReadIndex(msg.From, lastLogIndex, msg.Context)
+		r.cluster.AddReadIndex(msg.From, lastLogIndex, msg.Context) // 同时本地针对 |timestamp|nodeid|seq| 记录一笔记录
 	case pb.MessageType_VOTE:
 		r.ReciveRequestVote(msg.Term, msg.From, msg.LastLogTerm, msg.LastLogIndex)
 	case pb.MessageType_VOTE_RESP:
@@ -359,7 +361,7 @@ func (r *Raft) BroadcastHeartbeat(context []byte) {
 			LastLogTerm:  lastLogTerm,  // 对应节点数据进度的任期
 			LastCommit:   r.raftlog.commitIndex,
 
-			Context: context,
+			Context: context, // |timestamp|nodeid|seq|
 		})
 	})
 }
@@ -570,20 +572,20 @@ func (r *Raft) ReciveInstallSnapshot(from, term uint64, snap *pb.Snapshot) {
 // 处理心跳响应
 func (r *Raft) ReciveHeartbeatResp(mFrom, mTerm, mLastLogIndex uint64, context []byte) {
 
-	if len(context) > 0 {
+	if len(context) > 0 { // 心跳的特殊版（加了context透传），只是为了复用心跳消息这个定义
 		resp := r.cluster.HeartbeatCheck(context, mFrom)
-		if resp != nil {
-			// 响应follower readindex 请求
-			if resp.Send != 0 && resp.Send != r.id {
+		if resp != nil { //  resp != nil  说明发送的心跳，得到了多数派的认可
+			if resp.Send != 0 && resp.Send != r.id { // 说明是 follower 转发来的readindex
 				r.send(&pb.RaftMessage{
 					MsgType:      pb.MessageType_READINDEX_RESP,
 					Term:         r.currentTerm,
-					From:         r.id,
-					To:           resp.Send,
-					LastLogIndex: resp.Index,
+					From:         r.id,       // leader
+					To:           resp.Send,  // follower
+					LastLogIndex: resp.Index, // leader的索引
 					Context:      context,
 				})
 			} else {
+				// 这里说明是 leader 自己的 readindex
 				r.ReadIndex = append(r.ReadIndex, resp)
 			}
 		}

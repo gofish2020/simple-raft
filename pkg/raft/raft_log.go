@@ -278,6 +278,7 @@ func (l *RaftLog) Apply(lastCommit, lastLogIndex uint64) {
 		// 剩下的 [n+1:]
 		l.logEnties = l.logEnties[n+1:]
 
+		// 是为了让 readindex ，知道持久化的进度已经达到了最新数据的索引
 		l.NotifyReadIndex()
 	}
 }

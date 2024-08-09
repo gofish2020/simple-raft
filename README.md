@@ -26,7 +26,11 @@
 `leader`节点才会持有进度数据。这个非常重要，这样 `leader`才能知道接下来 `follower` 需要的数据进度是什么；
 
 
-leader 在接收读请求的时候，需要确定自己确实是 多数派认可的 leader，才能返回数据（避免脑裂的leader不合时宜的返回数据）
+`leader` 在接收读请求的时候，需要确定自己确实是 多数派认可的 `leader`，才能返回数据（避免脑裂的`leader`不合时宜的返回数据）,这个是通过 `readindex`消息实现：
+实现方案：
+- 接收到读请求后，`leader`会主动发送一条`readindex`消息，利用`map`本地记录一笔唯一记录；然后通过心跳透传，唯一标记给`follower`；
+
+- `follower`收到心跳，会返回心跳响应消息给`leader`。当`leader`收到心跳返回，看下有没有透传标记，同时修改本地唯一记录的**成功计数**，当达到多数派，说明 `leader`是有效的；否则就一直等待，直到超时错误（也就是本次的`leader`检测失败了）
 
 ![alt text](images/raft-role.drawio.png)
 

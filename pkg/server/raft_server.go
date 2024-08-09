@@ -137,28 +137,30 @@ func (s *RaftServer) get(key []byte) ([]byte, error) {
 	defer cancel()
 
 	if s.node.IsLeader() {
-		start := time.Now().UnixNano()
-		if start < s.leaderLease {
+		start := time.Now().UnixNano() // 纳秒
+		if start < s.leaderLease {     // 10s钟内，都认为 leader 是有效的
 			commitIndex = s.node.GetLastLogIndex()
 		} else {
 			commitIndex, err = s.readIndex(ctx)
 			if err == nil {
-				s.leaderLease = start + int64(s.node.GetElectionTime())*1000000000
+				s.leaderLease = start + int64(s.node.GetElectionTime())*1000000000 // 10s
 			}
 		}
 	} else {
-		commitIndex, err = s.readIndex(ctx)
+		commitIndex, err = s.readIndex(ctx) // 如果是follower，commitIndex 是 leader 的提交进度（并非持久化的进度）是最新的日志记录
 	}
 
 	if err != nil {
 		return nil, err
 	}
 
+	// WaitIndexApply 等待持久化的进度，达到了 commitIndex的进度，
 	err = s.node.WaitIndexApply(ctx, commitIndex)
 	if err != nil {
 		return nil, err
 	}
 
+	// 这相当于从 持久化中获取，就可以获取的最新数据了
 	return s.storage.GetValue(s.encoding.DefaultPrefix(key)), nil
 
 }
@@ -166,17 +168,18 @@ func (s *RaftServer) get(key []byte) ([]byte, error) {
 func (s *RaftServer) readIndex(ctx context.Context) (uint64, error) {
 	req := make([]byte, 8)
 	reqId := utils.NextId(s.id)
-	binary.BigEndian.PutUint64(req, reqId)
+	binary.BigEndian.PutUint64(req, reqId) // |timestamp|nodeid|seq|
 
-	err := s.node.ReadIndex(ctx, req)
+	err := s.node.ReadIndex(ctx, req) // req 只是一个数据标记而已，无实际意义
 	if err != nil {
 		return 0, err
 	}
 
+	// 死循环等待
 	for {
 		select {
-		case resp := <-s.node.ReadIndexNotifyChan():
-			if bytes.Equal(req, resp.Req) {
+		case resp := <-s.node.ReadIndexNotifyChan(): //
+			if bytes.Equal(req, resp.Req) { // 相同，说明得到了多数派的认可
 				return resp.Index, nil
 			}
 		case <-ctx.Done():

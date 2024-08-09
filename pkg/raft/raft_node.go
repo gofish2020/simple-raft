@@ -133,6 +133,7 @@ func (n *RaftNode) WaitIndexApply(ctx context.Context, index uint64) error {
 
 	ch := make(chan struct{})
 	wa := &WaitApply{index: index, ch: ch}
+	// 保存到 n.waitQueue 中
 	n.waitQueue = append(n.waitQueue, wa)
 
 	n.logger.Debugf("等待日志 %d 提交", index)
@@ -151,7 +152,7 @@ func (n *RaftNode) WaitIndexApply(ctx context.Context, index uint64) error {
 		return nil
 	case <-ctx.Done():
 		wa.done = true
-		if n.GetLastAppliedIndex() >= index {
+		if n.GetLastAppliedIndex() >= index { // 说明持久化的进度还没有达到最新数据的索引
 			return nil
 		}
 		return fmt.Errorf("等待日志 %d 提交: %v", index, ctx.Err())
