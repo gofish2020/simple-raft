@@ -9,7 +9,7 @@ import (
 
 type VoteResult int
 
-// 选取状态
+// 选举状态
 const (
 	Voting VoteResult = iota
 	VoteWon
@@ -25,11 +25,13 @@ type ReadIndexResp struct {
 
 // raft 集群对等节点状态
 type Cluster struct {
-	incoming           map[uint64]struct{} // 当前/新集群节点
-	outcoming          map[uint64]struct{} // 旧集群节点
-	pendingChangeIndex uint64              // 未完成变更日志
-	inJoint            bool                // 是否正在进行联合共识
-	voteResp           map[uint64]bool     // 投票节点
+	incoming map[uint64]struct{} // 当前/新集群节点
+
+	outcoming map[uint64]struct{} // 旧集群节点
+
+	pendingChangeIndex uint64          // 未完成变更日志
+	inJoint            bool            // 是否正在进行联合共识
+	voteResp           map[uint64]bool // 投票节点
 	pendingReadIndex   map[string]*ReadIndexResp
 	progress           map[uint64]*ReplicaProgress // 各节点进度
 	logger             *zap.SugaredLogger
@@ -54,7 +56,7 @@ func (c *Cluster) HeartbeatCheck(req []byte, node uint64) *ReadIndexResp {
 	return nil
 }
 
-// 检查选取结果
+// 检查选举结果
 func (c *Cluster) CheckVoteResult() VoteResult {
 	granted := 0
 	reject := 0
@@ -69,17 +71,17 @@ func (c *Cluster) CheckVoteResult() VoteResult {
 
 	// most := len(c.progress)/2 + 1
 	half := len(c.progress) / 2
-	// 多数承认->赢得选取
-	if granted >= half+1 {
+
+	if granted >= half+1 { // 多数派（一半以上）
 		return VoteWon
-	} else if reject >= half { // 半数拒绝，选取失败
+	} else if reject >= half { // 半数拒绝，选举失败
 		return VoteLost
 	}
-	// 尚在选取
+	// 尚在选举
 	return Voting
 }
 
-// 重置选取结果
+// 重置选举结果
 func (c *Cluster) ResetVoteResult() {
 	c.voteResp = make(map[uint64]bool)
 }
@@ -183,8 +185,8 @@ func (c *Cluster) IsPause(id uint64) bool {
 func (c *Cluster) UpdateLogIndex(id uint64, lastIndex uint64) {
 	p := c.progress[id]
 	if p != nil {
-		p.NextIndex = lastIndex
-		p.MatchIndex = lastIndex + 1
+		p.MatchIndex = lastIndex
+		p.NextIndex = lastIndex + 1
 	}
 }
 
@@ -238,7 +240,7 @@ func (c *Cluster) GetMacthIndex(id uint64) uint64 {
 	return 0
 }
 
-// 检查是否提交日志
+// 检查 index 是否已经得到多数派节点的确认（也就是多数派节点的同步进度，都有通过index 索引的数据）
 func (c *Cluster) CheckCommit(index uint64) bool {
 
 	// 新/旧集群都达到多数共识才允许提交
@@ -252,6 +254,8 @@ func (c *Cluster) CheckCommit(index uint64) bool {
 
 	if len(c.outcoming) > 0 {
 		outcomingLogged := 0
+
+		// 遍历集中的所有的节点，看下节点的进度索引是否都大于 index ，说明 index 索引的数据，多数派的节点都已经同步到了（得到了多数派节点的认可），那么就可以更改 commit
 		for id := range c.outcoming {
 			if index <= c.progress[id].MatchIndex {
 				outcomingLogged++

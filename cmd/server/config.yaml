@@ -1,0 +1,9 @@
+node:
+  workDir: ./data
+  name: node1
+  peerAddress: localhost:3900
+  serverAddress: localhost:8900
+  servers: 
+    node1: localhost:3900
+    node2: localhost:3901
+    node3: localhost:3902

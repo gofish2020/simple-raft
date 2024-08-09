@@ -17,16 +17,35 @@ type RaftStatus struct {
 }
 
 type RaftNode struct {
-	raft       *Raft                  // raft实例
-	recvc      chan *pb.RaftMessage   // 一般消息接收通道
-	propc      chan *pb.RaftMessage   // 提议消息接收通道
-	sendc      chan []*pb.RaftMessage // 消息发送通道
-	readIndexc chan *ReadIndexResp
+	raft       *Raft                   // raft实例
+	recvc      chan *pb.RaftMessage    // 一般消息接收通道
+	propc      chan *pb.RaftMessage    // 提议消息 接收通道
+	sendc      chan []*pb.RaftMessage  // 消息发送通道
+	readIndexc chan *ReadIndexResp     //
 	changec    chan []*pb.MemberChange // 变更接收通道
 	stopc      chan struct{}           // 停止
-	ticker     *time.Ticker            // 定时器(选取、心跳)
+	ticker     *time.Ticker            // 定时器(选举、心跳)
 	waitQueue  []*WaitApply
 	logger     *zap.SugaredLogger
+}
+
+// id 节点id  storge 本地存储 peers 集群节点ip地址  logger 打印日志
+func NewRaftNode(id uint64, storage Storage, peers map[uint64]string, logger *zap.SugaredLogger) *RaftNode {
+
+	node := &RaftNode{
+		raft:       NewRaft(id, storage, peers, logger),
+		recvc:      make(chan *pb.RaftMessage),
+		propc:      make(chan *pb.RaftMessage),
+		sendc:      make(chan []*pb.RaftMessage),
+		readIndexc: make(chan *ReadIndexResp),
+		changec:    make(chan []*pb.MemberChange),
+		stopc:      make(chan struct{}),
+		ticker:     time.NewTicker(time.Second), // 1s
+		logger:     logger,
+	}
+
+	node.Start() // 启动协程（死循环）
+	return node
 }
 
 // 启动raft
@@ -53,7 +72,7 @@ func (n *RaftNode) Start() {
 				readc = nil
 			}
 
-			// 接收/发送通道存在数据是，不处理提议
+			// 接收/发送通道存在数据是，不处理提议（也就是以内部的消息优先处理）
 			if len(n.recvc) > 0 || len(sendc) > 0 {
 				propc = nil
 			} else {
@@ -66,13 +85,16 @@ func (n *RaftNode) Start() {
 			}
 
 			select {
-			case <-n.ticker.C:
+			case <-n.ticker.C: // 1s 定时任务
 				n.raft.Tick()
-			case msg := <-n.recvc:
+
+			case msg := <-n.recvc: // n.recvc  的消息，本质来源于 stream 外部传递过来的消息（stream -> s.incomingChan-> n.recvc/n.propc)
 				n.raft.HandleMessage(msg)
-			case msg := <-propc:
+
+			case msg := <-propc: // 客户端发送来了消息
 				n.raft.HandleMessage(msg)
-			case sendc <- msgs:
+
+			case sendc <- msgs: // 来源于 n.raft.Msg，也就是raft 节点内部要发送出去的消息
 				n.raft.Msg = nil
 			case readc <- readIndex:
 				n.raft.ReadIndex = n.raft.ReadIndex[1:]
@@ -88,10 +110,10 @@ func (n *RaftNode) Start() {
 // 处理消息
 func (n *RaftNode) Process(ctx context.Context, msg *pb.RaftMessage) error {
 	var ch chan *pb.RaftMessage
-	if msg.MsgType == pb.MessageType_PROPOSE {
+	if msg.MsgType == pb.MessageType_PROPOSE { // 说明客户端发送来的消息
 		ch = n.propc
 	} else {
-		ch = n.recvc
+		ch = n.recvc // 说明 raft 集群内部发送来了消息 ----- 消息来源于 s.incomingChan(实际是网络grpc获取到的) -> 将消息又转发给了  n.recvc
 	}
 
 	select {
@@ -138,6 +160,8 @@ func (n *RaftNode) WaitIndexApply(ctx context.Context, index uint64) error {
 
 // 提议
 func (n *RaftNode) Propose(ctx context.Context, entries []*pb.LogEntry) error {
+
+	// MessageType_PROPOSE 相当于外部的客户端实际发送来的数据
 	msg := &pb.RaftMessage{
 		MsgType: pb.MessageType_PROPOSE,
 		Term:    n.raft.currentTerm,
@@ -254,22 +278,4 @@ func (n *RaftNode) Close() {
 	close(n.stopc)
 	n.ticker.Stop()
 	n.raft.raftlog.storage.Close()
-}
-
-func NewRaftNode(id uint64, storage Storage, peers map[uint64]string, logger *zap.SugaredLogger) *RaftNode {
-
-	node := &RaftNode{
-		raft:       NewRaft(id, storage, peers, logger),
-		recvc:      make(chan *pb.RaftMessage),
-		propc:      make(chan *pb.RaftMessage),
-		sendc:      make(chan []*pb.RaftMessage),
-		readIndexc: make(chan *ReadIndexResp),
-		changec:    make(chan []*pb.MemberChange),
-		stopc:      make(chan struct{}),
-		ticker:     time.NewTicker(time.Second),
-		logger:     logger,
-	}
-
-	node.Start()
-	return node
 }

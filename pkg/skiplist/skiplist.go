@@ -67,7 +67,7 @@ type SkipList struct {
 func (s *SkipList) randHeight() (h int) {
 	const branching = 4
 	h = 1
-	for h < tMaxHeight && s.rand.Int()%branching == 0 {
+	for h < tMaxHeight && s.rand.Int()%branching == 0 { // 0.25的概率，高度+1
 		h++
 	}
 	return

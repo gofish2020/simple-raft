@@ -40,7 +40,7 @@ func (s *RaftServer) Get(ctx context.Context, req *clientpb.ReadonlyQuery) (*cli
 }
 
 func (s *RaftServer) Put(ctx context.Context, req *clientpb.Request) (*clientpb.Response, error) {
-	if !s.node.Ready() {
+	if !s.node.Ready() { // 是否是主节点，如果不是，加入是follower需要 n.raft.leader !=0 ,说明集群中主已经选举出来了
 		return &clientpb.Response{Success: false}, fmt.Errorf("集群未就绪")
 	}
 
@@ -129,6 +129,7 @@ func (s *RaftServer) ExecSql(ctx context.Context, sqlStr string) ([]*SQLResult, 
 	return rets, nil
 }
 
+// 启动 kv 服务
 func (s *RaftServer) StartKvServer() {
 
 	lis, err := net.Listen("tcp", s.serverAddress)

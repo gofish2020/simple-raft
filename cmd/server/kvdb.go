@@ -3,10 +3,10 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"io/ioutil"
 	"kvdb/pkg/server"
 	"kvdb/pkg/utils"
 	"log"
+	"os"
 	"path"
 
 	"gopkg.in/yaml.v2"
@@ -33,7 +33,9 @@ func init() {
 func main() {
 
 	flag.Parse()
-	conf, err := ioutil.ReadFile(configFile)
+
+	// 读取配置文件
+	conf, err := os.ReadFile(configFile)
 	if err != nil {
 		log.Panicf("读取配置文件 %s 失败: %v", conf, err)
 	}
@@ -45,6 +47,7 @@ func main() {
 		log.Panicf("解析配置文件 %s 失败: %v", conf, err)
 	}
 
+	// ./data/node1
 	logger := utils.GetLogger(path.Join(config.NodeConf.WorkDir, config.NodeConf.Name))
 	sugar := logger.Sugar()
 
@@ -52,12 +55,13 @@ func main() {
 
 	sugar.Infof("配置文件: %s , %s", configFile, string(json))
 
+	// 创建 RaftServer 对象
 	server.Bootstrap(&server.Config{
-		Dir:           config.NodeConf.WorkDir,
-		Name:          config.NodeConf.Name,
-		PeerAddress:   config.NodeConf.PeerAddress,
-		ServerAddress: config.NodeConf.ServerAddress,
-		Peers:         config.NodeConf.Servers,
+		Dir:           config.NodeConf.WorkDir,       // ./data
+		Name:          config.NodeConf.Name,          //  node1
+		PeerAddress:   config.NodeConf.PeerAddress,   // localhost:3900
+		ServerAddress: config.NodeConf.ServerAddress, // localhost:8900     kv服务的端口
+		Peers:         config.NodeConf.Servers,       /*  node1: localhost:3900   node2: localhost:3901  node3: localhost:3902 */
 		Logger:        sugar,
 	}).Start()
 

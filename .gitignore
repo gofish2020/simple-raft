@@ -10,3 +10,5 @@ build/
 pkg/sql/ebnf/
 
 pkg/sql/yacc/
+
+.VSCodeCounter

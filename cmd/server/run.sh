@@ -1,0 +1,1 @@
+go run kvdb.go -f config.yaml

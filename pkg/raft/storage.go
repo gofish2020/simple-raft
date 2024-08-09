@@ -21,7 +21,7 @@ import (
 )
 
 // 数据生成快照阈值
-const LOG_SNAPSHOT_SIZE = 32 * 1024 * 1024
+const LOG_SNAPSHOT_SIZE = 32 * 1024 * 1024 // 32MB
 const WAL_FLUSH_INTERVAL = 10 * time.Second
 
 type Storage interface {
@@ -331,13 +331,13 @@ func restoreLogEntries(dir string, encoding Encoding, snap *Snapshot, logger *za
 
 // 新建raft存储
 func NewRaftStorage(dir string, encoding Encoding, logger *zap.SugaredLogger) *RaftStorage {
-	// 保证文件夹存在
+	// 保证文件夹存在     ./data/node1
 	if _, err := os.Stat(dir); err != nil {
 		os.Mkdir(dir, os.ModePerm)
 	}
 
 	snapConf := lsm.NewConfig(path.Join(dir, "snapshot"), logger)
-	snapConf.SstSize = LOG_SNAPSHOT_SIZE
+	snapConf.SstSize = LOG_SNAPSHOT_SIZE // sorted string table Size
 
 	// 从文件夹恢复快照状态
 	snap, err := NewSnapshot(snapConf)

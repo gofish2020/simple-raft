@@ -119,7 +119,7 @@ const (
 	MessageType_VOTE_RESP             MessageType = 1
 	MessageType_HEARTBEAT             MessageType = 2
 	MessageType_HEARTBEAT_RESP        MessageType = 3
-	MessageType_APPEND_ENTRY          MessageType = 4
+	MessageType_APPEND_ENTRY          MessageType = 4 // 
 	MessageType_APPEND_ENTRY_RESP     MessageType = 5
 	MessageType_PROPOSE               MessageType = 6
 	MessageType_PROPOSE_RESP          MessageType = 7

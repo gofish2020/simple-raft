@@ -43,7 +43,7 @@ type SimpleEncoding struct {
 }
 
 func (se *SimpleEncoding) DefaultPrefix(key []byte) []byte {
-	prefix := []byte{DEFAULT_PREFIX, PREFIX_SPLITTER}
+	prefix := []byte{DEFAULT_PREFIX, PREFIX_SPLITTER} // 1 _
 	return append(prefix, key...)
 }
 
@@ -64,7 +64,9 @@ func (se *SimpleEncoding) DecodeIndex(key []byte) uint64 {
 }
 
 // 键: 大端日志索引 , 值： |日志类型(1字节)|任期|实际数据|
-func (se *SimpleEncoding) EncodeLogEntry(entry *pb.LogEntry) ([]byte, []byte) {
+func (se *SimpleEncoding) EncodeLogEntry(entry *pb.LogEntry) ([]byte, []byte) { // index    type + term + data
+
+	// se.scratch = index + type + term
 	binary.BigEndian.PutUint64(se.scratch[0:], entry.Index)
 	se.scratch[8] = uint8(entry.Type)
 	n := binary.PutUvarint(se.scratch[9:], entry.Term)
@@ -83,9 +85,9 @@ func (se *SimpleEncoding) DecodeLogEntry(key, value []byte) *pb.LogEntry {
 func (se *SimpleEncoding) EncodeLogEntryData(key, value []byte) []byte {
 	header := make([]byte, 20)
 
-	n := binary.PutUvarint(header[0:], uint64(len(key)))
-	n += binary.PutUvarint(header[n:], uint64(len(value)))
-	length := len(key) + len(value) + n
+	n := binary.PutUvarint(header[0:], uint64(len(key)))   // 键长度 整数占用的字节数
+	n += binary.PutUvarint(header[n:], uint64(len(value))) // 值长度 整数占用的字节数
+	length := len(key) + len(value) + n                    // 占用的总字节数
 
 	b := make([]byte, length)
 	copy(b, header[:n])

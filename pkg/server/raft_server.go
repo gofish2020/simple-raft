@@ -29,6 +29,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// RaftServer 其实包含了两部分功能，即是 kv服务，又是 raft的节点服务
 type RaftServer struct {
 	pb.RaftServer
 	clientpb.KvdbServer
@@ -36,15 +37,15 @@ type RaftServer struct {
 	dir           string
 	id            uint64
 	name          string
-	peerAddress   string
-	serverAddress string
+	peerAddress   string // raft message 服务地址
+	serverAddress string // kv 服务地址
 
 	raftServer *grpc.Server
 	kvServer   *grpc.Server
-	peers      map[uint64]*Peer
+	peers      map[uint64]*Peer //（除了自己） 记录其他节点的id + 网络连接（grpc连接），实际用来发送数据
 	tmpPeers   map[uint64]*Peer
 
-	incomingChan chan *pb.RaftMessage
+	incomingChan chan *pb.RaftMessage // incomingChan 不同的客户端接发送来的消息，数据统一的存储对象
 
 	encoding raft.Encoding
 
@@ -59,15 +60,46 @@ type RaftServer struct {
 	logger      *zap.SugaredLogger
 }
 
+// 启动服务
+func (s *RaftServer) Start() {
+
+	// 监听地址
+	lis, err := net.Listen("tcp", s.peerAddress)
+	if err != nil {
+		s.logger.Errorf("对等节点服务器失败: %v", err)
+	}
+
+	// new grpc 服务对象
+	var opts []grpc.ServerOption
+	s.raftServer = grpc.NewServer(opts...)
+
+	s.logger.Infof("对等节点服务器启动成功 %s", s.peerAddress)
+	// 注册服务端 处理对象
+	pb.RegisterRaftServer(s.raftServer, s)
+
+	s.showMetrics() // 采集监控数据
+
+	s.handle() // 处理消息发送/接收
+
+	// 启动 kv 服务
+	go s.StartKvServer()
+
+	// raft server 启动服务
+	err = s.raftServer.Serve(lis)
+	if err != nil {
+		s.logger.Errorf("Raft内部服务器关闭: %v", err)
+	}
+}
+
 // 接受节点双向流，用以发送消息
 func (s *RaftServer) Consensus(stream pb.Raft_ConsensusServer) error {
-	return s.addServerPeer(stream)
+	return s.addServerPeer(stream) // 说明客户端连接来了
 }
 
 // 添加对等节点-双向流
 func (s *RaftServer) addServerPeer(stream pb.Raft_ConsensusServer) error {
 
-	msg, err := stream.Recv()
+	msg, err := stream.Recv() // 获取到了第一个消息
 	if err == io.EOF {
 		s.logger.Debugf("流读取结束")
 		return nil
@@ -91,8 +123,8 @@ func (s *RaftServer) addServerPeer(stream pb.Raft_ConsensusServer) error {
 	s.logger.Debugf("添加 %s 读写流", strconv.FormatUint(msg.From, 16))
 
 	if p.SetStream(stream) {
-		s.node.Process(context.Background(), msg)
-		p.Recv()
+		s.node.Process(context.Background(), msg) // 处理该消息
+		p.Recv()                                  // 死循环从流中获取raft消息，保存到 p.recvc中（其实不通的客户端的p.Recv死循环，获取到的消息，都会统一保存到 s.incomingChan 中）
 	}
 	return nil
 }
@@ -158,6 +190,7 @@ func (s *RaftServer) put(key, value []byte) error {
 
 	s.metric <- pb.MessageType_PROPOSE
 
+	// 编码数据
 	data := s.encoding.EncodeLogEntryData(s.encoding.DefaultPrefix(key), value)
 	// if err != nil {
 	// 	s.logger.Errorf("序列化键值 key: %s ,value: %s 对失败: %v", string(key), string(value), err)
@@ -255,6 +288,7 @@ func (s *RaftServer) applyRemove() {
 	}
 }
 
+// 节点内部处理消息
 func (s *RaftServer) process(msg *pb.RaftMessage) (err error) {
 	defer func() {
 		if reason := recover(); reason != nil {
@@ -262,9 +296,9 @@ func (s *RaftServer) process(msg *pb.RaftMessage) (err error) {
 		}
 	}()
 
-	if msg.MsgType == pb.MessageType_APPEND_ENTRY {
+	if msg.MsgType == pb.MessageType_APPEND_ENTRY { // MessageType_APPEND_ENTRY 追加消息
 		for _, entry := range msg.GetEntry() {
-			if entry.Type == pb.EntryType_MEMBER_CHNAGE {
+			if entry.Type == pb.EntryType_MEMBER_CHNAGE { // EntryType_NORMAL or EntryType_MEMBER_CHNAGE 成员变更
 				var changeCol pb.MemberChangeCol
 				err := proto.Unmarshal(entry.Data, &changeCol)
 				if err != nil {
@@ -275,6 +309,7 @@ func (s *RaftServer) process(msg *pb.RaftMessage) (err error) {
 		}
 	}
 
+	// 调用节点处理消息
 	return s.node.Process(context.Background(), msg)
 }
 
@@ -283,11 +318,11 @@ func (s *RaftServer) handle() {
 	go func() {
 		for {
 			select {
-			case <-s.stopc:
+			case <-s.stopc: // 停止通知
 				return
-			case msgs := <-s.node.SendChan():
-				s.sendMsg(msgs)
-			case msg := <-s.incomingChan:
+			case msgs := <-s.node.SendChan(): // 当前节点内部，要发送出去的 raft message
+				s.sendMsg(msgs) // 利用 s.Peers 找到节点对应的网络 socket，然后发送出去
+			case msg := <-s.incomingChan: // incomingChan 的数据，实际来源于 NewPeer 中的 stream 接收到的 raft message（不管当前是服务端，还是作为客户端）
 				s.process(msg)
 			case changes := <-s.storage.NotifyChan():
 				if len(changes) == 0 {
@@ -298,28 +333,33 @@ func (s *RaftServer) handle() {
 	}()
 }
 
-// 通过双向流发送消息
+// 基于消息中的 id，知道通过哪个网络连接给对方发送数据
 func (s *RaftServer) sendMsg(msgs []*pb.RaftMessage) {
 	msgMap := make(map[uint64][]*pb.RaftMessage, len(s.peers)-1)
 
 	for _, msg := range msgs {
+
+		// 看下消息要发给哪个节点
 		if s.peers[msg.To] == nil {
+
+			// 如果不存在该节点，就使用临时发送
 			p := s.tmpPeers[msg.To]
 			if p != nil {
 				p.send(msg)
+				// 应该放到这里
+				p.Stop()
+				delete(s.tmpPeers, msg.To)
 			}
-			p.Stop()
-			delete(s.tmpPeers, msg.To)
-			continue
 		} else {
 			if msgMap[msg.To] == nil {
-				msgMap[msg.To] = make([]*pb.RaftMessage, 0)
+				msgMap[msg.To] = make([]*pb.RaftMessage, 0) // 创建发送切片
 			}
-			msgMap[msg.To] = append(msgMap[msg.To], msg)
+			msgMap[msg.To] = append(msgMap[msg.To], msg) // 把发送给同一个节点的数据，做堆积
 		}
 	}
 	for k, v := range msgMap {
 		if len(v) > 0 {
+			// 批量向节点进行发送
 			s.peers[k].SendBatch(v)
 		}
 	}
@@ -348,32 +388,6 @@ func (s *RaftServer) Stop() {
 		}
 	}
 
-}
-
-// 启动服务
-func (s *RaftServer) Start() {
-
-	lis, err := net.Listen("tcp", s.peerAddress)
-	if err != nil {
-		s.logger.Errorf("对等节点服务器失败: %v", err)
-	}
-	var opts []grpc.ServerOption
-	s.raftServer = grpc.NewServer(opts...)
-
-	s.logger.Infof("对等节点服务器启动成功 %s", s.peerAddress)
-
-	pb.RegisterRaftServer(s.raftServer, s)
-
-	s.showMetrics()
-
-	s.handle()
-
-	go s.StartKvServer()
-
-	err = s.raftServer.Serve(lis)
-	if err != nil {
-		s.logger.Errorf("Raft内部服务器关闭: %v", err)
-	}
 }
 
 func (s *RaftServer) Ready() bool {
