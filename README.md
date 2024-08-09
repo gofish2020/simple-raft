@@ -17,9 +17,16 @@
 ![alt text](images/kvServer.drawio.png)
 
 集群节点内部如何通信
+
+这里利用了 grpc stream 来实现数据的传递。每个节点收到的数据保存在通道中，并且只有一个协程读取数据进行处理，所以不存在并发的问题。。 实际的业务处理都是单线程的
 ![alt text](images/raftServer.drawio.png)
 
 每个角色的职责：
+
+`leader`节点才会持有进度数据。这个非常重要，这样 `leader`才能知道接下来 `follower` 需要的数据进度是什么；
+
+
+leader 在接收读请求的时候，需要确定自己确实是 多数派认可的 leader，才能返回数据（避免脑裂的leader不合时宜的返回数据）
 
 ![alt text](images/raft-role.drawio.png)
 
